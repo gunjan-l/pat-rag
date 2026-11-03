@@ -1,0 +1,42 @@
+services:
+  qdrant:
+    image: docker.io/qdrant/qdrant:latest
+    container_name: pat-rag-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  langfuse-db:
+    image: docker.io/postgres:16-alpine
+    container_name: pat-rag-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    ports:
+      - "5432:5432"
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+
+  langfuse-server:
+    image: docker.io/langfuse/langfuse:latest
+    container_name: pat-rag-langfuse-server
+    restart: unless-stopped
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: pat-rag-langfuse-secret-key-12345
+      SALT: pat-rag-langfuse-salt-12345
+      NEXTAUTH_URL: http://localhost:3000
+      TELEMETRY_ENABLED: "false"
+
+volumes:
+  qdrant_data:
+  langfuse_db_data:
