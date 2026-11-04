@@ -339,3 +339,16 @@ class VectorStoreService:
             chunks.append({"chunk_text": txt, "metadata": chunk_meta})
 
         return await self.upsert_chunks(namespace=namespace, chunks=chunks)
+
+
+class _LazyVectorStoreService:
+    _instance: VectorStoreService | None = None
+
+    def __getattr__(self, name: str):
+        if self._instance is None:
+            self._instance = VectorStoreService()
+        return getattr(self._instance, name)
+
+
+vector_store_service = _LazyVectorStoreService()
+

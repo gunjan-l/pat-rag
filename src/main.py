@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from src.config import settings
 from src.routers.chunks import router as chunks_router
 from src.routers.extract import router as extract_router
+from src.routers.retrieve import router as retrieve_router
 from src.services.extractor import ExtractionError
 
 app = FastAPI(
@@ -33,6 +34,7 @@ async def extraction_error_handler(request: Request, exc: ExtractionError):
 
 
 app.include_router(extract_router)
+app.include_router(retrieve_router)
 
 
 @app.get("/health")
