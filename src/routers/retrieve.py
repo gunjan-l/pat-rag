@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from src.services.retrieval import (
     RetrievalService,
@@ -23,11 +23,14 @@ def get_retrieval_service() -> RetrievalService:
 @router.post("/retrieve/rewrite", response_model=RewriteResponse)
 async def rewrite_query(
     body: RewriteRequest,
+    request: Request,
     service: RetrievalService = Depends(get_retrieval_service),
 ) -> RewriteResponse:
+    parent_trace = getattr(request.state, "trace", None)
     rewritten = await service.rewrite_query(
         query_text=body.query_text,
         conversation_context=body.conversation_context,
+        parent_trace=parent_trace,
     )
     return RewriteResponse(rewritten_query=rewritten)
 
@@ -35,8 +38,10 @@ async def rewrite_query(
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(
     body: RetrieveRequest,
+    request: Request,
     service: RetrievalService = Depends(get_retrieval_service),
 ) -> RetrieveResponse:
+    parent_trace = getattr(request.state, "trace", None)
     return await service.retrieve(
         namespace=body.namespace,
         query_text=body.query_text,
@@ -44,4 +49,5 @@ async def retrieve(
         top_k=body.top_k,
         confidence_threshold=body.confidence_threshold,
         max_requery_attempts=body.max_requery_attempts,
+        parent_trace=parent_trace,
     )

@@ -1,5 +1,7 @@
+import inspect
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -7,6 +9,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.services.observability import ObservabilityService, get_observability_service
 from src.services.vector_store import vector_store_service
 
 logger = logging.getLogger(__name__)
@@ -312,17 +315,43 @@ class LLMQueryRewriter:
         api_key: str | None = None,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4o-mini",
+        observability: ObservabilityService | None = None,
     ):
         self.api_key = api_key or settings.openai_api_key
         self.base_url = (base_url or settings.openai_base_url).rstrip("/")
         self.model = model or settings.completion_model
+        self.observability = observability or get_observability_service()
 
-    async def rewrite(self, query_text: str, conversation_context: list[str]) -> str:
+    async def rewrite(
+        self,
+        query_text: str,
+        conversation_context: list[str],
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
         if not conversation_context:
             return query_text
 
+        trace = parent_trace or self.observability.create_trace(
+            name="query_rewrite",
+            metadata={"query_text": query_text, "context_length": len(conversation_context)},
+        )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_chain_start"):
+                    cb.on_chain_start(
+                        {"name": "query_rewrite"},
+                        {"query_text": query_text, "conversation_context": conversation_context},
+                    )
+
         if not self.api_key:
-            return f"{query_text} ({' '.join(conversation_context)})"
+            result = f"{query_text} ({' '.join(conversation_context)})"
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_chain_end"):
+                        cb.on_chain_end({"rewritten_query": result})
+            return result
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         prompt = (
@@ -338,6 +367,25 @@ class LLMQueryRewriter:
             {"role": "user", "content": user_prompt},
         ]
 
+        gen = None
+        if hasattr(trace, "generation"):
+            gen = trace.generation(
+                name="llm_query_rewrite",
+                model=self.model,
+                input=messages,
+            )
+        elif hasattr(trace, "span"):
+            gen = trace.span(
+                name="llm_query_rewrite",
+                input=messages,
+            )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_llm_start"):
+                    cb.on_llm_start({"name": self.model}, [user_prompt])
+
+        start_time = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
@@ -351,15 +399,67 @@ class LLMQueryRewriter:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip().strip("\"'")
-                return content or query_text
+                content = data["choices"][0]["message"]["content"].strip().strip('"\'')
+                result = content or query_text
+                usage = data.get("usage", {})
+
+                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                if gen:
+                    if hasattr(gen, "end"):
+                        gen.end(
+                            output=result,
+                            usage=usage,
+                            metadata={"latency_ms": latency_ms},
+                        )
+                    elif hasattr(gen, "update"):
+                        gen.update(output=result, usage=usage)
+
+                if callbacks:
+                    for cb in callbacks:
+                        if hasattr(cb, "on_llm_end"):
+                            cb.on_llm_end(data)
+                        if hasattr(cb, "on_chain_end"):
+                            cb.on_chain_end({"rewritten_query": result})
+
+                return result
         except Exception as exc:
             logger.warning("LLM rewrite failed, falling back to deterministic rewrite: %s", exc)
-            return f"{query_text} ({' '.join(conversation_context)})"
+            fallback = f"{query_text} ({' '.join(conversation_context)})"
+            if gen and hasattr(gen, "end"):
+                gen.end(output=fallback, status_message=str(exc), level="ERROR")
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_chain_end"):
+                        cb.on_chain_end({"rewritten_query": fallback, "error": str(exc)})
+            return fallback
 
-    async def reformulate(self, query_text: str, reason: str | None = None) -> str:
+    async def reformulate(
+        self,
+        query_text: str,
+        reason: str | None = None,
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
+        trace = parent_trace or self.observability.create_trace(
+            name="query_reformulate",
+            metadata={"query_text": query_text, "reason": reason},
+        )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_chain_start"):
+                    cb.on_chain_start(
+                        {"name": "query_reformulate"},
+                        {"query_text": query_text, "reason": reason},
+                    )
+
         if not self.api_key:
-            return f"{query_text} detailed specification"
+            fallback = f"{query_text} detailed specification"
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_chain_end"):
+                        cb.on_chain_end({"reformulated_query": fallback})
+            return fallback
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         prompt = (
@@ -377,6 +477,27 @@ class LLMQueryRewriter:
             {"role": "user", "content": user_content},
         ]
 
+        gen = None
+        if hasattr(trace, "generation"):
+            gen = trace.generation(
+                name="llm_query_reformulate",
+                model=self.model,
+                input=messages,
+                metadata={"reason": reason},
+            )
+        elif hasattr(trace, "span"):
+            gen = trace.span(
+                name="llm_query_reformulate",
+                input=messages,
+                metadata={"reason": reason},
+            )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_llm_start"):
+                    cb.on_llm_start({"name": self.model}, [user_content])
+
+        start_time = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
@@ -390,13 +511,41 @@ class LLMQueryRewriter:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip().strip("\"'")
-                return content or query_text
+                content = data["choices"][0]["message"]["content"].strip().strip('"\'')
+                result = content or query_text
+                usage = data.get("usage", {})
+
+                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                if gen:
+                    if hasattr(gen, "end"):
+                        gen.end(
+                            output=result,
+                            usage=usage,
+                            metadata={"latency_ms": latency_ms},
+                        )
+                    elif hasattr(gen, "update"):
+                        gen.update(output=result, usage=usage)
+
+                if callbacks:
+                    for cb in callbacks:
+                        if hasattr(cb, "on_llm_end"):
+                            cb.on_llm_end(data)
+                        if hasattr(cb, "on_chain_end"):
+                            cb.on_chain_end({"reformulated_query": result})
+
+                return result
         except Exception as exc:
             logger.warning(
                 "LLM reformulate failed, falling back to deterministic expansion: %s", exc
             )
-            return f"{query_text} detailed specification"
+            fallback = f"{query_text} detailed specification"
+            if gen and hasattr(gen, "end"):
+                gen.end(output=fallback, status_message=str(exc), level="ERROR")
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_chain_end"):
+                        cb.on_chain_end({"reformulated_query": fallback, "error": str(exc)})
+            return fallback
 
 
 class RetrievalService:
@@ -406,12 +555,56 @@ class RetrievalService:
         self,
         vector_store: Any | None = None,
         rewriter: LLMQueryRewriter | None = None,
+        observability: ObservabilityService | None = None,
     ):
         self.vector_store = vector_store or vector_store_service
         self.rewriter = rewriter or LLMQueryRewriter()
+        self.observability = observability or get_observability_service()
 
-    async def rewrite_query(self, query_text: str, conversation_context: list[str]) -> str:
-        return await self.rewriter.rewrite(query_text, conversation_context)
+    async def _safe_rewrite(
+        self,
+        query_text: str,
+        conversation_context: list[str],
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
+        sig = inspect.signature(self.rewriter.rewrite)
+        kwargs: dict[str, Any] = {}
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if "parent_trace" in sig.parameters or has_varkw:
+            kwargs["parent_trace"] = parent_trace
+        if "callbacks" in sig.parameters or has_varkw:
+            kwargs["callbacks"] = callbacks
+        return await self.rewriter.rewrite(query_text, conversation_context, **kwargs)
+
+    async def _safe_reformulate(
+        self,
+        query_text: str,
+        reason: str | None = None,
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
+        sig = inspect.signature(self.rewriter.reformulate)
+        kwargs: dict[str, Any] = {}
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if "reason" in sig.parameters or has_varkw:
+            kwargs["reason"] = reason
+        if "parent_trace" in sig.parameters or has_varkw:
+            kwargs["parent_trace"] = parent_trace
+        if "callbacks" in sig.parameters or has_varkw:
+            kwargs["callbacks"] = callbacks
+        return await self.rewriter.reformulate(query_text, **kwargs)
+
+    async def rewrite_query(
+        self,
+        query_text: str,
+        conversation_context: list[str],
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
+        return await self._safe_rewrite(
+            query_text, conversation_context, parent_trace=parent_trace, callbacks=callbacks
+        )
 
     async def retrieve(
         self,
@@ -421,18 +614,53 @@ class RetrievalService:
         top_k: int = 4,
         confidence_threshold: float = 0.55,
         max_requery_attempts: int = 1,
+        callbacks: list[Any] | None = None,
+        parent_trace: Any | None = None,
     ) -> RetrieveResponse:
         context = conversation_context or []
 
+        trace = parent_trace or self.observability.create_trace(
+            name="retrieval",
+            metadata={
+                "namespace": namespace,
+                "top_k": top_k,
+                "confidence_threshold": confidence_threshold,
+                "max_requery_attempts": max_requery_attempts,
+            },
+            tags=["retrieval", f"namespace:{namespace}"],
+        )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_chain_start"):
+                    cb.on_chain_start(
+                        {"name": "retrieval"},
+                        {"namespace": namespace, "query_text": query_text, "context": context},
+                    )
+
         # 1. Automatically rewrite conversational query if context is non-empty
         if context:
-            rewritten_query = await self.rewriter.rewrite(query_text, context)
+            rewritten_query = await self._safe_rewrite(
+                query_text, context, parent_trace=trace, callbacks=callbacks
+            )
         else:
             rewritten_query = query_text
 
         current_query = rewritten_query
 
         # 2. Query vector store
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_retriever_start"):
+                    cb.on_retriever_start({"name": "vector_store"}, current_query)
+
+        vector_span = None
+        if hasattr(trace, "span"):
+            vector_span = trace.span(
+                name="vector_store_query",
+                input={"namespace": namespace, "query": current_query, "top_k": top_k},
+            )
+
         query_res = await self.vector_store.query_chunks(
             namespace=namespace,
             query_text=current_query,
@@ -441,6 +669,16 @@ class RetrievalService:
         matches = query_res.get("matches", [])
         query_terms = extract_query_terms(current_query)
         initial_confidence = compute_composite_confidence(query_terms, matches)
+
+        if vector_span and hasattr(vector_span, "end"):
+            vector_span.end(
+                output={"match_count": len(matches), "confidence": initial_confidence}
+            )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_retriever_end"):
+                    cb.on_retriever_end(matches)
 
         best_matches = matches
         best_confidence = initial_confidence
@@ -460,10 +698,29 @@ class RetrievalService:
                 )
 
             attempts += 1
-            reformulated_query = await self.rewriter.reformulate(
-                current_query, reason=requery_reason
+            requery_span = None
+            if hasattr(trace, "span"):
+                requery_span = trace.span(
+                    name=f"requery_attempt_{attempts}",
+                    input={
+                        "attempt": attempts,
+                        "current_query": current_query,
+                        "reason": requery_reason,
+                    },
+                )
+
+            reformulated_query = await self._safe_reformulate(
+                current_query,
+                reason=requery_reason,
+                parent_trace=trace,
+                callbacks=callbacks,
             )
             current_query = reformulated_query
+
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_retriever_start"):
+                        cb.on_retriever_start({"name": "vector_store_requery"}, current_query)
 
             new_query_res = await self.vector_store.query_chunks(
                 namespace=namespace,
@@ -473,6 +730,20 @@ class RetrievalService:
             new_matches = new_query_res.get("matches", [])
             new_terms = extract_query_terms(current_query)
             new_confidence = compute_composite_confidence(new_terms, new_matches)
+
+            if callbacks:
+                for cb in callbacks:
+                    if hasattr(cb, "on_retriever_end"):
+                        cb.on_retriever_end(new_matches)
+
+            if requery_span and hasattr(requery_span, "end"):
+                requery_span.end(
+                    output={
+                        "reformulated_query": current_query,
+                        "match_count": len(new_matches),
+                        "confidence": new_confidence,
+                    }
+                )
 
             # Keep candidate results that improved or when initial had no matches
             if new_confidence >= best_confidence or (not best_matches and new_matches):
@@ -502,10 +773,26 @@ class RetrievalService:
                 )
             )
 
-        return RetrieveResponse(
+        response = RetrieveResponse(
             results=results,
             confidence=confidence_label,
             requery_performed=requery_performed,
             requery_reason=requery_reason,
             rewritten_query=rewritten_query,
         )
+
+        if hasattr(trace, "update"):
+            trace.update(
+                output={
+                    "confidence": confidence_label,
+                    "results_count": len(results),
+                    "requery_performed": requery_performed,
+                }
+            )
+
+        if callbacks:
+            for cb in callbacks:
+                if hasattr(cb, "on_chain_end"):
+                    cb.on_chain_end(response.model_dump())
+
+        return response
