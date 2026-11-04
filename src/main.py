@@ -7,6 +7,7 @@ from src.routers.chunks import router as chunks_router
 from src.routers.extract import router as extract_router
 from src.routers.retrieve import router as retrieve_router
 from src.services.extractor import ExtractionError
+from src.services.observability import ObservabilityMiddleware
 
 app = FastAPI(
     title="PAT AI Platform - RAG Core",
@@ -14,6 +15,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
