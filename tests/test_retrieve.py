@@ -1,10 +1,16 @@
+from typing import Any
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from qdrant_client import QdrantClient
 
 from src.main import app
 from src.routers.retrieve import get_retrieval_service
-from src.services.retrieval import LLMQueryRewriter, RetrievalService
+from src.services.retrieval import (
+    LLMQueryRewriter,
+    RetrievalService,
+    compute_composite_confidence,
+)
 from src.services.vector_store import VectorStoreService
 
 
@@ -50,14 +56,26 @@ class MockRewriter(LLMQueryRewriter):
         self.reformulate_calls = []
         self.reformulate_return_value: str | None = None
 
-    async def rewrite(self, query_text: str, conversation_context: list[str]) -> str:
+    async def rewrite(
+        self,
+        query_text: str,
+        conversation_context: list[str],
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
         self.rewrite_calls.append((query_text, conversation_context))
         if not conversation_context:
             return query_text
         # Deterministic mock rewrite resolving pronouns
         return f"accreditation data retention policy for {query_text}"
 
-    async def reformulate(self, query_text: str, reason: str | None = None) -> str:
+    async def reformulate(
+        self,
+        query_text: str,
+        reason: str | None = None,
+        parent_trace: Any | None = None,
+        callbacks: list[Any] | None = None,
+    ) -> str:
         self.reformulate_calls.append((query_text, reason))
         if self.reformulate_return_value is not None:
             return self.reformulate_return_value
@@ -305,3 +323,25 @@ async def test_citation_and_explanation_structure(
     expected_span = "Article 42. Compliance protocols for external cloud systems."
     assert res["source"]["quoted_span"] == expected_span
     assert "compliance" in res["explanation"].lower() or "protocols" in res["explanation"].lower()
+
+
+def test_compute_composite_confidence_rrf_normalization():
+    # Theoretical max RRF score for rank 1 across 2 lists (2/61 ~ 0.0328)
+    max_rrf = 2.0 / 61.0
+    matches = [{"score": max_rrf, "chunk_text": "retention policy details"}]
+    terms = ["retention", "policy"]
+    # score=1.0 * 0.6 + coverage=1.0 * 0.4 = 1.0
+    conf = compute_composite_confidence(terms, matches)
+    assert conf == 1.0
+
+    # Half max RRF score (1/61)
+    matches = [{"score": 1.0 / 61.0, "chunk_text": "retention policy details"}]
+    conf = compute_composite_confidence(terms, matches)
+    # score=0.5 * 0.6 + coverage=1.0 * 0.4 = 0.3 + 0.4 = 0.7
+    assert conf == 0.7
+
+    # Standard score (> 0.05)
+    matches = [{"score": 0.85, "chunk_text": "retention policy details"}]
+    conf = compute_composite_confidence(terms, matches)
+    # score=0.85 * 0.6 + coverage=1.0 * 0.4 = 0.51 + 0.4 = 0.91
+    assert conf == 0.91

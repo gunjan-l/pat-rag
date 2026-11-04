@@ -320,3 +320,55 @@ async def test_extractor_unsupported_raises_error():
     extractor = DocumentExtractor()
     with pytest.raises(UnsupportedFormatError):
         await extractor.extract(b"data", "script.sh")
+
+
+@pytest.mark.asyncio
+async def test_extract_json_unsupported_format_error():
+    """Verify HTTP 400 with UNSUPPORTED_FORMAT for unsupported file extensions in JSON request."""
+    payload = {
+        "blob_url": "https://storage.example.com/script.sh",
+        "filename": "script.sh",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/extract", json=payload)
+
+    assert response.status_code == 400
+    res = response.json()
+    assert res["error_code"] == "UNSUPPORTED_FORMAT"
+    assert "not supported" in res["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_extract_json_malformed_body():
+    """Verify HTTP 400 with UNSUPPORTED_FORMAT for invalid JSON payload."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/extract",
+            content=b"not valid json",
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 400
+    res = response.json()
+    assert res["error_code"] == "UNSUPPORTED_FORMAT"
+
+
+@pytest.mark.asyncio
+async def test_extract_unexpected_exception_handled():
+    """Verify unexpected extraction errors are caught and return CORRUPT_FILE instead of 500."""
+    mock_extractor = AsyncMock(spec=DocumentExtractor)
+    mock_extractor.extract = AsyncMock(side_effect=RuntimeError("Internal parser fault"))
+
+    app.dependency_overrides[get_extractor] = lambda: mock_extractor
+    try:
+        files = {"file": ("policy.pdf", b"%PDF-1.5 test", "application/pdf")}
+        data = {"filename": "policy.pdf"}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/extract", files=files, data=data)
+
+        assert response.status_code == 422
+        res = response.json()
+        assert res["error_code"] == "CORRUPT_FILE"
+    finally:
+        app.dependency_overrides.clear()

@@ -1,4 +1,3 @@
-import inspect
 import logging
 import re
 import time
@@ -9,187 +8,11 @@ import httpx
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.constants import STOPWORDS
 from src.services.observability import ObservabilityService, get_observability_service
 from src.services.vector_store import vector_store_service
 
 logger = logging.getLogger(__name__)
-
-STOPWORDS = {
-    "a",
-    "about",
-    "above",
-    "after",
-    "again",
-    "against",
-    "all",
-    "am",
-    "an",
-    "and",
-    "any",
-    "are",
-    "aren't",
-    "as",
-    "at",
-    "be",
-    "because",
-    "been",
-    "before",
-    "being",
-    "below",
-    "between",
-    "both",
-    "but",
-    "by",
-    "can't",
-    "cannot",
-    "could",
-    "couldn't",
-    "did",
-    "didn't",
-    "do",
-    "does",
-    "doesn't",
-    "doing",
-    "don't",
-    "down",
-    "during",
-    "each",
-    "few",
-    "for",
-    "from",
-    "further",
-    "had",
-    "hadn't",
-    "has",
-    "hasn't",
-    "have",
-    "haven't",
-    "having",
-    "he",
-    "he'd",
-    "he'll",
-    "he's",
-    "her",
-    "here",
-    "here's",
-    "hers",
-    "herself",
-    "him",
-    "himself",
-    "his",
-    "how",
-    "how's",
-    "i",
-    "i'd",
-    "i'll",
-    "i'm",
-    "i've",
-    "if",
-    "in",
-    "into",
-    "is",
-    "isn't",
-    "it",
-    "it's",
-    "its",
-    "itself",
-    "let's",
-    "me",
-    "more",
-    "most",
-    "mustn't",
-    "my",
-    "myself",
-    "no",
-    "nor",
-    "not",
-    "of",
-    "off",
-    "on",
-    "once",
-    "only",
-    "or",
-    "other",
-    "ought",
-    "our",
-    "ours",
-    "ourselves",
-    "out",
-    "over",
-    "own",
-    "same",
-    "shan't",
-    "she",
-    "she'd",
-    "she'll",
-    "she's",
-    "should",
-    "shouldn't",
-    "so",
-    "some",
-    "such",
-    "than",
-    "that",
-    "that's",
-    "the",
-    "their",
-    "theirs",
-    "them",
-    "themselves",
-    "then",
-    "there",
-    "there's",
-    "these",
-    "they",
-    "they'd",
-    "they'll",
-    "they're",
-    "they've",
-    "this",
-    "those",
-    "through",
-    "to",
-    "too",
-    "under",
-    "until",
-    "up",
-    "very",
-    "was",
-    "wasn't",
-    "we",
-    "we'd",
-    "we'll",
-    "we're",
-    "we've",
-    "were",
-    "weren't",
-    "what",
-    "what's",
-    "when",
-    "when's",
-    "where",
-    "where's",
-    "which",
-    "while",
-    "who",
-    "who's",
-    "whom",
-    "why",
-    "why's",
-    "with",
-    "won't",
-    "would",
-    "wouldn't",
-    "you",
-    "you'd",
-    "you'll",
-    "you're",
-    "you've",
-    "your",
-    "yours",
-    "yourself",
-    "yourselves",
-}
 
 
 def extract_filename(metadata: dict[str, Any]) -> str:
@@ -249,7 +72,13 @@ def compute_composite_confidence(
         return 0.0
 
     top_score = float(matches[0].get("score", 0.0))
-    normalized_score = max(0.0, min(1.0, top_score))
+    # Qdrant RRF scores are approximately in range [0.0, 0.033].
+    # If top_score is <= 0.05, normalize via theoretical max RRF score
+    # for rank 1 across 2 lists (2/61).
+    if top_score <= 0.05:
+        normalized_score = max(0.0, min(1.0, top_score / (2.0 / 61.0)))
+    else:
+        normalized_score = max(0.0, min(1.0, top_score))
 
     if not query_terms:
         coverage = 1.0
@@ -561,40 +390,6 @@ class RetrievalService:
         self.rewriter = rewriter or LLMQueryRewriter()
         self.observability = observability or get_observability_service()
 
-    async def _safe_rewrite(
-        self,
-        query_text: str,
-        conversation_context: list[str],
-        parent_trace: Any | None = None,
-        callbacks: list[Any] | None = None,
-    ) -> str:
-        sig = inspect.signature(self.rewriter.rewrite)
-        kwargs: dict[str, Any] = {}
-        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-        if "parent_trace" in sig.parameters or has_varkw:
-            kwargs["parent_trace"] = parent_trace
-        if "callbacks" in sig.parameters or has_varkw:
-            kwargs["callbacks"] = callbacks
-        return await self.rewriter.rewrite(query_text, conversation_context, **kwargs)
-
-    async def _safe_reformulate(
-        self,
-        query_text: str,
-        reason: str | None = None,
-        parent_trace: Any | None = None,
-        callbacks: list[Any] | None = None,
-    ) -> str:
-        sig = inspect.signature(self.rewriter.reformulate)
-        kwargs: dict[str, Any] = {}
-        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-        if "reason" in sig.parameters or has_varkw:
-            kwargs["reason"] = reason
-        if "parent_trace" in sig.parameters or has_varkw:
-            kwargs["parent_trace"] = parent_trace
-        if "callbacks" in sig.parameters or has_varkw:
-            kwargs["callbacks"] = callbacks
-        return await self.rewriter.reformulate(query_text, **kwargs)
-
     async def rewrite_query(
         self,
         query_text: str,
@@ -602,7 +397,7 @@ class RetrievalService:
         parent_trace: Any | None = None,
         callbacks: list[Any] | None = None,
     ) -> str:
-        return await self._safe_rewrite(
+        return await self.rewriter.rewrite(
             query_text, conversation_context, parent_trace=parent_trace, callbacks=callbacks
         )
 
@@ -640,7 +435,7 @@ class RetrievalService:
 
         # 1. Automatically rewrite conversational query if context is non-empty
         if context:
-            rewritten_query = await self._safe_rewrite(
+            rewritten_query = await self.rewriter.rewrite(
                 query_text, context, parent_trace=trace, callbacks=callbacks
             )
         else:
@@ -707,7 +502,7 @@ class RetrievalService:
                     },
                 )
 
-            reformulated_query = await self._safe_reformulate(
+            reformulated_query = await self.rewriter.reformulate(
                 current_query,
                 reason=requery_reason,
                 parent_trace=trace,

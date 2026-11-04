@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -200,6 +201,7 @@ def test_parse_args_defaults():
     assert args.min_faithfulness == 0.70
     assert args.min_relevancy == 0.70
     assert args.mock is False
+    assert args.live is False
 
 
 def test_parse_args_custom():
@@ -220,6 +222,7 @@ def test_parse_args_custom():
             "--min-relevancy",
             "0.75",
             "--mock",
+            "--live",
         ]
     )
     assert args.dataset == "custom.json"
@@ -230,6 +233,7 @@ def test_parse_args_custom():
     assert args.min_faithfulness == 0.90
     assert args.min_relevancy == 0.75
     assert args.mock is True
+    assert args.live is True
 
 
 def test_missing_dataset_file(tmp_path):
@@ -281,3 +285,40 @@ def test_cli_subprocess_execution(tmp_path):
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 0
     assert out_json.exists()
+
+
+def test_live_eval_mode_populates_retrieved_contexts():
+    mock_retrieval_service = AsyncMock()
+    mock_item = MagicMock()
+    mock_item.chunk_text = (
+        "Accreditation Policy 2026, Section 4.2 (Data Retention): All clinical audit records "
+        "and related patient review documentation must be retained for a mandatory minimum "
+        "period of 7 years following final disposition."
+    )
+    mock_response = MagicMock()
+    mock_response.results = [mock_item]
+    mock_retrieval_service.retrieve.return_value = mock_response
+
+    sample = {
+        "id": "live-sample-1",
+        "question": "What is the mandatory data retention period for clinical audit records?",
+        "reference_contexts": [
+            "Accreditation Policy 2026, Section 4.2 (Data Retention): All clinical audit records "
+            "must be retained for 7 years."
+        ],
+        "ground_truth": "Retained for 7 years.",
+        "response": "Clinical audit records must be retained for 7 years.",
+        "retrieved_contexts": [],
+    }
+
+    result = evaluate_dataset(
+        dataset=[sample],
+        mock=True,
+        live=True,
+        retrieval_service=mock_retrieval_service,
+    )
+
+    assert result["live"] is True
+    assert "live" in result["mode"]
+    assert sample["retrieved_contexts"] == [mock_item.chunk_text]
+    mock_retrieval_service.retrieve.assert_awaited_once()

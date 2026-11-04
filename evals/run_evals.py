@@ -11,6 +11,7 @@ Supports mock / offline mode for CI/CD environments without external API keys.
 """
 
 import argparse
+import asyncio
 import datetime
 import json
 import os
@@ -19,151 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Standard English stopwords for lexical/heuristic matching in mock mode
-STOPWORDS = {
-    "a",
-    "about",
-    "above",
-    "after",
-    "again",
-    "against",
-    "all",
-    "am",
-    "an",
-    "and",
-    "any",
-    "are",
-    "aren't",
-    "as",
-    "at",
-    "be",
-    "because",
-    "been",
-    "before",
-    "being",
-    "below",
-    "between",
-    "both",
-    "but",
-    "by",
-    "can",
-    "can't",
-    "cannot",
-    "could",
-    "couldn't",
-    "did",
-    "didn't",
-    "do",
-    "does",
-    "doesn't",
-    "doing",
-    "don't",
-    "down",
-    "during",
-    "each",
-    "few",
-    "for",
-    "from",
-    "further",
-    "had",
-    "hadn't",
-    "has",
-    "hasn't",
-    "have",
-    "haven't",
-    "having",
-    "he",
-    "her",
-    "here",
-    "hers",
-    "herself",
-    "him",
-    "himself",
-    "his",
-    "how",
-    "i",
-    "if",
-    "in",
-    "into",
-    "is",
-    "isn't",
-    "it",
-    "it's",
-    "its",
-    "itself",
-    "just",
-    "me",
-    "more",
-    "most",
-    "my",
-    "myself",
-    "no",
-    "nor",
-    "not",
-    "now",
-    "of",
-    "off",
-    "on",
-    "once",
-    "only",
-    "or",
-    "other",
-    "our",
-    "ours",
-    "ourselves",
-    "out",
-    "over",
-    "own",
-    "same",
-    "she",
-    "should",
-    "shouldn't",
-    "so",
-    "some",
-    "such",
-    "than",
-    "that",
-    "the",
-    "their",
-    "theirs",
-    "them",
-    "themselves",
-    "then",
-    "there",
-    "these",
-    "they",
-    "this",
-    "those",
-    "through",
-    "to",
-    "too",
-    "under",
-    "until",
-    "up",
-    "very",
-    "was",
-    "wasn't",
-    "we",
-    "were",
-    "weren't",
-    "what",
-    "when",
-    "where",
-    "which",
-    "while",
-    "who",
-    "whom",
-    "why",
-    "with",
-    "won't",
-    "would",
-    "wouldn't",
-    "you",
-    "your",
-    "yours",
-    "yourself",
-    "yourselves",
-}
+from src.constants import STOPWORDS
 
 
 def stem_token(word: str) -> str:
@@ -370,10 +227,60 @@ def evaluate_mock_sample(sample: dict[str, Any]) -> dict[str, float]:
     }
 
 
+async def populate_live_contexts_async(
+    dataset: list[dict[str, Any]],
+    retrieval_service: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Query RetrievalService to dynamically populate retrieved_contexts for each sample."""
+    if retrieval_service is None:
+        from src.services.retrieval import RetrievalService
+
+        retrieval_service = RetrievalService()
+
+    for sample in dataset:
+        query = sample.get("question") or sample.get("user_input", "")
+        namespace = (
+            sample.get("namespace") or sample.get("metadata", {}).get("namespace") or "default"
+        )
+        context = sample.get("conversation_context") or []
+        res = await retrieval_service.retrieve(
+            namespace=namespace,
+            query_text=query,
+            conversation_context=context,
+        )
+        sample["retrieved_contexts"] = [item.chunk_text for item in res.results]
+
+    return dataset
+
+
+def populate_live_contexts(
+    dataset: list[dict[str, Any]],
+    retrieval_service: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Synchronous / bridge wrapper to run live retrieval context population."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(
+                asyncio.run,
+                populate_live_contexts_async(dataset, retrieval_service),
+            ).result()
+    else:
+        return asyncio.run(populate_live_contexts_async(dataset, retrieval_service))
+
+
 def evaluate_dataset(
     dataset: list[dict[str, Any]],
     mock: bool = True,
     thresholds: dict[str, float] | None = None,
+    live: bool = False,
+    retrieval_service: Any | None = None,
 ) -> dict[str, Any]:
     """Execute evaluation over dataset items and return structured results."""
     if thresholds is None:
@@ -383,6 +290,9 @@ def evaluate_dataset(
             "faithfulness": 0.70,
             "answer_relevancy": 0.70,
         }
+
+    if live:
+        dataset = populate_live_contexts(dataset, retrieval_service=retrieval_service)
 
     # Decide mode: online Ragas vs mock
     use_online = (not mock) and bool(os.environ.get("OPENAI_API_KEY"))
@@ -461,13 +371,20 @@ def evaluate_dataset(
 
     all_passed = all(thresholds_passed.values())
 
+    mode_label = (
+        f"live-{'online' if use_online else 'mock'}"
+        if live
+        else ("online" if use_online else "mock")
+    )
+
     return {
         "total_samples": len(dataset),
         "metrics": mean_metrics,
         "thresholds": thresholds,
         "thresholds_passed": thresholds_passed,
         "passed": all_passed,
-        "mode": "online" if use_online else "mock",
+        "mode": mode_label,
+        "live": live,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         "per_sample_results": per_sample_results,
     }
@@ -502,7 +419,10 @@ def generate_markdown_report(result: dict[str, Any]) -> str:
             "",
             "## Detailed Per-Sample Breakdown",
             "",
-            "| ID | Category | Context Precision | Context Recall | Faithfulness | Answer Relevancy |",
+            (
+                "| ID | Category | Context Precision | Context Recall | "
+                "Faithfulness | Answer Relevancy |"
+            ),
             "| :--- | :--- | :--- | :--- | :--- | :--- |",
         ]
     )
@@ -567,6 +487,13 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Minimum required answer_relevancy threshold (default: 0.70)",
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        dest="live",
+        default=False,
+        help="Run live retrieval via RetrievalService to dynamically populate retrieved_contexts",
+    )
+    parser.add_argument(
         "--mock",
         "--offline",
         action="store_true",
@@ -604,6 +531,7 @@ def main(args: list[str] | None = None) -> int:
         dataset=dataset,
         mock=mock_mode,
         thresholds=thresholds,
+        live=parsed.live,
     )
 
     # Output reports if requested
