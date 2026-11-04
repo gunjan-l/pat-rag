@@ -1,4 +1,22 @@
 services:
+  api:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    container_name: pat-rag-api
+    working_dir: /app
+    volumes:
+      - .:/app:z
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
   qdrant:
     image: docker.io/qdrant/qdrant:latest
     container_name: pat-rag-qdrant

@@ -1,0 +1,12 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=0 \
+    PYTHONUNBUFFERED=1
+
+# Expose API port and debugpy port
+EXPOSE 8000 5678
+
+# Default command: hot-reloading dev server
+CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
