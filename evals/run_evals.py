@@ -21,20 +21,148 @@ from typing import Any
 
 # Standard English stopwords for lexical/heuristic matching in mock mode
 STOPWORDS = {
-    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any",
-    "are", "aren't", "as", "at", "be", "because", "been", "before", "being", "below",
-    "between", "both", "but", "by", "can", "can't", "cannot", "could", "couldn't", "did",
-    "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during", "each", "few",
-    "for", "from", "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having",
-    "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if",
-    "in", "into", "is", "isn't", "it", "it's", "its", "itself", "just", "me", "more", "most",
-    "my", "myself", "no", "nor", "not", "now", "of", "off", "on", "once", "only", "or",
-    "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should",
-    "shouldn't", "so", "some", "such", "than", "that", "the", "their", "theirs", "them",
-    "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too",
-    "under", "until", "up", "very", "was", "wasn't", "we", "were", "weren't", "what", "when",
-    "where", "which", "while", "who", "whom", "why", "with", "won't", "would", "wouldn't",
-    "you", "your", "yours", "yourself", "yourselves",
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "aren't",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "can't",
+    "cannot",
+    "could",
+    "couldn't",
+    "did",
+    "didn't",
+    "do",
+    "does",
+    "doesn't",
+    "doing",
+    "don't",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "hadn't",
+    "has",
+    "hasn't",
+    "have",
+    "haven't",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "isn't",
+    "it",
+    "it's",
+    "its",
+    "itself",
+    "just",
+    "me",
+    "more",
+    "most",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "now",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "shouldn't",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "wasn't",
+    "we",
+    "were",
+    "weren't",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "with",
+    "won't",
+    "would",
+    "wouldn't",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
 }
 
 
@@ -53,8 +181,24 @@ def stem_token(word: str) -> str:
     if word.startswith("comply") or word.startswith("compli"):
         return "comply"
     for suffix in (
-        "tions", "tion", "ings", "ing", "ments", "ment", "ances", "ance",
-        "ences", "ence", "ables", "able", "ibles", "ible", "ies", "es", "ed", "s",
+        "tions",
+        "tion",
+        "ings",
+        "ing",
+        "ments",
+        "ment",
+        "ances",
+        "ance",
+        "ences",
+        "ence",
+        "ables",
+        "able",
+        "ibles",
+        "ible",
+        "ies",
+        "es",
+        "ed",
+        "s",
     ):
         if word.endswith(suffix) and len(word) - len(suffix) >= 3:
             return word[: -len(suffix)]
@@ -178,9 +322,20 @@ def calculate_answer_relevancy(question: str, response: str) -> float:
         return 0.0
 
     meta_terms = {
-        "mechanism", "mechanisms", "frequently", "timeline", "criteria",
-        "algorithm", "algorithms", "protocol", "protocols", "period",
-        "requirement", "requirements", "manner", "way",
+        "mechanism",
+        "mechanisms",
+        "frequently",
+        "timeline",
+        "criteria",
+        "algorithm",
+        "algorithms",
+        "protocol",
+        "protocols",
+        "period",
+        "requirement",
+        "requirements",
+        "manner",
+        "way",
     }
     content_q = {t for t in q_tokens if t not in meta_terms}
     if not content_q:
@@ -247,19 +402,12 @@ def evaluate_dataset(
 
             # Format dataset for Ragas
             ragas_data = {
-                "question": [
-                    s.get("question") or s.get("user_input", "") for s in dataset
-                ],
+                "question": [s.get("question") or s.get("user_input", "") for s in dataset],
                 "contexts": [
-                    s.get("retrieved_contexts") or s.get("reference_contexts", [])
-                    for s in dataset
+                    s.get("retrieved_contexts") or s.get("reference_contexts", []) for s in dataset
                 ],
-                "answer": [
-                    s.get("response") or s.get("ground_truth", "") for s in dataset
-                ],
-                "ground_truth": [
-                    s.get("ground_truth") or s.get("reference", "") for s in dataset
-                ],
+                "answer": [s.get("response") or s.get("ground_truth", "") for s in dataset],
+                "ground_truth": [s.get("ground_truth") or s.get("reference", "") for s in dataset],
             }
             hf_ds = HFDataset.from_dict(ragas_data)
             eval_result = evaluate(
@@ -274,12 +422,14 @@ def evaluate_dataset(
                     "faithfulness": float(df["faithfulness"].iloc[idx]),
                     "answer_relevancy": float(df["answer_relevancy"].iloc[idx]),
                 }
-                per_sample_results.append({
-                    "sample_id": sample.get("id", f"sample-{idx}"),
-                    "question": sample.get("question") or sample.get("user_input", ""),
-                    "scores": {k: round(v, 4) for k, v in scores.items()},
-                    "metadata": sample.get("metadata", {}),
-                })
+                per_sample_results.append(
+                    {
+                        "sample_id": sample.get("id", f"sample-{idx}"),
+                        "question": sample.get("question") or sample.get("user_input", ""),
+                        "scores": {k: round(v, 4) for k, v in scores.items()},
+                        "metadata": sample.get("metadata", {}),
+                    }
+                )
         except Exception as e:
             # Fallback to mock on online failure
             print(f"Online evaluation encountered error ({e}); falling back to offline mode.")
@@ -288,12 +438,14 @@ def evaluate_dataset(
     if not use_online:
         for idx, sample in enumerate(dataset):
             scores = evaluate_mock_sample(sample)
-            per_sample_results.append({
-                "sample_id": sample.get("id", f"sample-{idx}"),
-                "question": sample.get("question") or sample.get("user_input", ""),
-                "scores": scores,
-                "metadata": sample.get("metadata", {}),
-            })
+            per_sample_results.append(
+                {
+                    "sample_id": sample.get("id", f"sample-{idx}"),
+                    "question": sample.get("question") or sample.get("user_input", ""),
+                    "scores": scores,
+                    "metadata": sample.get("metadata", {}),
+                }
+            )
 
     # Compute mean metrics
     metric_keys = ["context_precision", "context_recall", "faithfulness", "answer_relevancy"]
@@ -345,13 +497,15 @@ def generate_markdown_report(result: dict[str, Any]) -> str:
         pass_icon = "PASS" if passed else "FAIL"
         lines.append(f"| **{metric}** | {score:.4f} | {thresh:.4f} | {pass_icon} |")
 
-    lines.extend([
-        "",
-        "## Detailed Per-Sample Breakdown",
-        "",
-        "| ID | Category | Context Precision | Context Recall | Faithfulness | Answer Relevancy |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- |",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Detailed Per-Sample Breakdown",
+            "",
+            "| ID | Category | Context Precision | Context Recall | Faithfulness | Answer Relevancy |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- |",
+        ]
+    )
 
     for sample in result["per_sample_results"]:
         s_id = sample["sample_id"]

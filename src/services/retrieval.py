@@ -399,7 +399,7 @@ class LLMQueryRewriter:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip().strip('"\'')
+                content = data["choices"][0]["message"]["content"].strip().strip("\"'")
                 result = content or query_text
                 usage = data.get("usage", {})
 
@@ -511,7 +511,7 @@ class LLMQueryRewriter:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip().strip('"\'')
+                content = data["choices"][0]["message"]["content"].strip().strip("\"'")
                 result = content or query_text
                 usage = data.get("usage", {})
 
@@ -671,9 +671,7 @@ class RetrievalService:
         initial_confidence = compute_composite_confidence(query_terms, matches)
 
         if vector_span and hasattr(vector_span, "end"):
-            vector_span.end(
-                output={"match_count": len(matches), "confidence": initial_confidence}
-            )
+            vector_span.end(output={"match_count": len(matches), "confidence": initial_confidence})
 
         if callbacks:
             for cb in callbacks:

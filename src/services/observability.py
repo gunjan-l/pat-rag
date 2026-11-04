@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 try:
     from langchain_core.callbacks.base import BaseCallbackHandler
 except ImportError:
+
     class BaseCallbackHandler:  # type: ignore
         def on_chain_start(self, serialized: Any, inputs: Any, **kwargs: Any) -> None:
             pass
@@ -119,12 +120,8 @@ class ObservabilityService:
         host: str | None = None,
         client: Any | None = None,
     ):
-        self.public_key = (
-            public_key if public_key is not None else settings.langfuse_public_key
-        )
-        self.secret_key = (
-            secret_key if secret_key is not None else settings.langfuse_secret_key
-        )
+        self.public_key = public_key if public_key is not None else settings.langfuse_public_key
+        self.secret_key = secret_key if secret_key is not None else settings.langfuse_secret_key
         self.host = host if host is not None else settings.langfuse_host
         self._custom_client = client
         self._client: Any | None = None

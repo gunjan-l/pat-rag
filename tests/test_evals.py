@@ -87,16 +87,25 @@ def test_runner_threshold_enforcement_pass(tmp_path):
     output_md = tmp_path / "report.md"
 
     # Set low thresholds that should easily pass
-    exit_code = main([
-        "--dataset", "evals/data/golden_dataset.json",
-        "--output-json", str(output_json),
-        "--output-md", str(output_md),
-        "--min-precision", "0.5",
-        "--min-recall", "0.5",
-        "--min-faithfulness", "0.5",
-        "--min-relevancy", "0.5",
-        "--mock",
-    ])
+    exit_code = main(
+        [
+            "--dataset",
+            "evals/data/golden_dataset.json",
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+            "--min-precision",
+            "0.5",
+            "--min-recall",
+            "0.5",
+            "--min-faithfulness",
+            "0.5",
+            "--min-relevancy",
+            "0.5",
+            "--mock",
+        ]
+    )
 
     assert exit_code == 0
     assert output_json.exists()
@@ -117,13 +126,19 @@ def test_runner_threshold_enforcement_fail(tmp_path):
     output_md = tmp_path / "report_fail.md"
 
     # Set impossibly high threshold (1.01) to force failure
-    exit_code = main([
-        "--dataset", "evals/data/golden_dataset.json",
-        "--output-json", str(output_json),
-        "--output-md", str(output_md),
-        "--min-precision", "1.01",
-        "--mock",
-    ])
+    exit_code = main(
+        [
+            "--dataset",
+            "evals/data/golden_dataset.json",
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+            "--min-precision",
+            "1.01",
+            "--mock",
+        ]
+    )
 
     assert exit_code == 1
     assert output_json.exists()
@@ -139,12 +154,17 @@ def test_runner_report_generation(tmp_path):
     output_json = tmp_path / "eval_out.json"
     output_md = tmp_path / "eval_out.md"
 
-    exit_code = main([
-        "--dataset", "evals/data/golden_dataset.json",
-        "--output-json", str(output_json),
-        "--output-md", str(output_md),
-        "--mock",
-    ])
+    exit_code = main(
+        [
+            "--dataset",
+            "evals/data/golden_dataset.json",
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
+            "--mock",
+        ]
+    )
     assert exit_code == 0
 
     # Check JSON output structure
@@ -183,16 +203,25 @@ def test_parse_args_defaults():
 
 
 def test_parse_args_custom():
-    args = parse_args([
-        "--dataset", "custom.json",
-        "--output-json", "out.json",
-        "--output-md", "out.md",
-        "--min-precision", "0.85",
-        "--min-recall", "0.80",
-        "--min-faithfulness", "0.90",
-        "--min-relevancy", "0.75",
-        "--mock",
-    ])
+    args = parse_args(
+        [
+            "--dataset",
+            "custom.json",
+            "--output-json",
+            "out.json",
+            "--output-md",
+            "out.md",
+            "--min-precision",
+            "0.85",
+            "--min-recall",
+            "0.80",
+            "--min-faithfulness",
+            "0.90",
+            "--min-relevancy",
+            "0.75",
+            "--mock",
+        ]
+    )
     assert args.dataset == "custom.json"
     assert args.output_json == "out.json"
     assert args.output_md == "out.md"
@@ -208,19 +237,27 @@ def test_missing_dataset_file(tmp_path):
     assert exit_code == 1
 
 
-@pytest.mark.parametrize("failing_flag", [
-    "--min-recall",
-    "--min-faithfulness",
-    "--min-relevancy",
-])
+@pytest.mark.parametrize(
+    "failing_flag",
+    [
+        "--min-recall",
+        "--min-faithfulness",
+        "--min-relevancy",
+    ],
+)
 def test_individual_threshold_failures(tmp_path, failing_flag):
     output_json = tmp_path / f"fail_{failing_flag.strip('-')}.json"
-    exit_code = main([
-        "--dataset", "evals/data/golden_dataset.json",
-        "--output-json", str(output_json),
-        failing_flag, "1.05",
-        "--mock",
-    ])
+    exit_code = main(
+        [
+            "--dataset",
+            "evals/data/golden_dataset.json",
+            "--output-json",
+            str(output_json),
+            failing_flag,
+            "1.05",
+            "--mock",
+        ]
+    )
     assert exit_code == 1
     assert output_json.exists()
     with open(output_json, encoding="utf-8") as f:
@@ -233,12 +270,14 @@ def test_cli_subprocess_execution(tmp_path):
     cmd = [
         sys.executable,
         "evals/run_evals.py",
-        "--dataset", "evals/data/golden_dataset.json",
-        "--output-json", str(out_json),
-        "--min-precision", "0.5",
+        "--dataset",
+        "evals/data/golden_dataset.json",
+        "--output-json",
+        str(out_json),
+        "--min-precision",
+        "0.5",
         "--mock",
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 0
     assert out_json.exists()
-
