@@ -120,9 +120,7 @@ class VectorStoreService:
                         distance=models.Distance.COSINE,
                     )
                 },
-                sparse_vectors_config={
-                    "sparse": models.SparseVectorParams()
-                },
+                sparse_vectors_config={"sparse": models.SparseVectorParams()},
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
@@ -351,4 +349,3 @@ class _LazyVectorStoreService:
 
 
 vector_store_service = _LazyVectorStoreService()
-

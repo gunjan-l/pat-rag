@@ -176,8 +176,7 @@ async def test_query_hybrid_and_namespace_isolation(client: AsyncClient):
     assert data_alpha["matches"][0]["metadata"]["source"] == "alpha_policy.pdf"
     assert "score" in data_alpha["matches"][0]
     assert (
-        data_alpha["matches"][0]["chunk_text"]
-        == "Alpha tenant retention requirements are 5 years."
+        data_alpha["matches"][0]["chunk_text"] == "Alpha tenant retention requirements are 5 years."
     )
 
     # Query tenant_beta
